@@ -3,28 +3,63 @@ import { getToken } from '@/utils/auth'
 import errorCode from '@/utils/errorCode'
 import { useUserStore } from '@/store/modules/user'
 import { toast, showConfirm, tansParams } from '@/utils/common'
+import StorageService from '@/utils/StorageService'
 
 let timeout = 10000
-const baseUrl = config.baseUrl
+
+/**
+ * 获取基础URL
+ * 优先使用用户在"通信配置"页面配置的服务器地址
+ * 如果未配置，则使用默认的config.baseUrl
+ */
+function getBaseUrl() {
+  const serverUrl = StorageService.getServerUrl()
+  return serverUrl || config.baseUrl
+}
+
+const baseUrl = getBaseUrl()
 
 const request = config => {
   // 是否需要设置 token
+  // API调用时使用headers（复数），这里需要检查headers
   const isToken = (config.headers || {}).isToken === false
+
+  // uni.request使用header（单数），需要统一
+  // 如果传入的是headers（复数），需要合并到header（单数）
   config.header = config.header || {}
+
+  // 添加token到header
   if (getToken() && !isToken) {
     config.header['Authorization'] = 'Bearer ' + getToken()
+    // 重要：添加clientid到header，后端会验证clientid与token中的clientid是否一致
+    config.header['clientid'] = '428a8310cd442757ae699df5d894f051'
   }
+
   // get请求映射params参数
   if (config.params) {
     let url = config.url + '?' + tansParams(config.params)
     url = url.slice(0, -1)
     config.url = url
   }
+
+  // 打印调试信息
+  console.log('========== API请求 ==========')
+  console.log('URL:', config.url)
+  console.log('Method:', config.method || 'get')
+  console.log('Token:', getToken() ? '存在 (长度: ' + getToken().length + ')' : '不存在')
+  console.log('isToken参数:', isToken)
+  console.log('需要发送Token:', !isToken)
+  console.log('请求Headers:', JSON.stringify(config.header))
+  console.log('============================')
+
   return new Promise((resolve, reject) => {
+    // 每次请求时动态获取 baseURL，确保使用最新的用户配置
+    const currentBaseUrl = config.baseUrl || getBaseUrl()
+
     uni.request({
         method: config.method || 'get',
         timeout: config.timeout ||  timeout,
-        url: config.baseUrl || baseUrl + config.url,
+        url: currentBaseUrl + config.url,
         data: config.data,
         header: config.header,
         dataType: 'json'

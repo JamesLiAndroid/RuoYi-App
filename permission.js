@@ -2,10 +2,13 @@ import { getToken } from '@/utils/auth'
 
 // 登录页面
 const loginPage = "/pages/login"
-  
-// 页面白名单
+
+// 页面白名单（无需Token即可访问）
 const whiteList = [
-  '/pages/login', '/pages/register', '/pages/common/webview/index'
+  '/pages/login',
+  '/pages/register',
+  '/pages/communication-config',  // ✅ 添加通信配置页面到白名单
+  '/pages/common/webview/index'
 ]
 
 // 检查地址白名单
@@ -19,15 +22,16 @@ let list = ["navigateTo", "redirectTo", "reLaunch", "switchTab"]
 list.forEach(item => {
   uni.addInterceptor(item, {
     invoke(to) {
+      // 白名单页面直接放行（包括login和communication-config）
+      if (checkWhite(to.url)) {
+        return true
+      }
+
+      // 非白名单页面需要Token
       if (getToken()) {
-        if (to.url === loginPage) {
-          uni.reLaunch({ url: "/" })
-        }
         return true
       } else {
-        if (checkWhite(to.url)) {
-          return true
-        }
+        // 无Token且不在白名单，跳转到登录页
         uni.reLaunch({ url: loginPage })
         return false
       }
