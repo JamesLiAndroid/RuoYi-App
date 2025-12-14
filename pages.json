@@ -5,6 +5,33 @@
       "navigationBarTitleText": "登录"
     }
   }, {
+    "path": "pages/communication-config",
+    "style": {
+      "navigationBarTitleText": "通信配置"
+    }
+  }, {
+    "path": "pages/data-sync",
+    "style": {
+      "navigationBarTitleText": "数据同步"
+    }
+  }, {
+    "path": "pages/index/TaskList",
+    "style": {
+      "navigationBarTitleText": "巡检任务",
+      "navigationStyle": "custom"
+    }
+  }, {
+    "path": "pages/inspection/InspectionPage",
+    "style": {
+      "navigationBarTitleText": "巡检中",
+      "navigationStyle": "custom"
+    }
+  }, {
+    "path": "pages/record/RecordList",
+    "style": {
+      "navigationBarTitleText": "巡检记录"
+    }
+  }, {
     "path": "pages/register",
     "style": {
       "navigationBarTitleText": "注册"
@@ -72,20 +99,20 @@
     }
   }],
   "tabBar": {
-    "color": "#000000",
-    "selectedColor": "#000000",
+    "color": "#666666",
+    "selectedColor": "#1890ff",
     "borderStyle": "white",
     "backgroundColor": "#ffffff",
     "list": [{
-        "pagePath": "pages/index",
-        "iconPath": "static/images/tabbar/home.png",
-        "selectedIconPath": "static/images/tabbar/home_.png",
-        "text": "首页"
+        "pagePath": "pages/index/TaskList",
+        "iconPath": "static/images/tabbar/task.png",
+        "selectedIconPath": "static/images/tabbar/task_active.png",
+        "text": "任务"
       }, {
-        "pagePath": "pages/work/index",
-        "iconPath": "static/images/tabbar/work.png",
-        "selectedIconPath": "static/images/tabbar/work_.png",
-        "text": "工作台"
+        "pagePath": "pages/record/RecordList",
+        "iconPath": "static/images/tabbar/record.png",
+        "selectedIconPath": "static/images/tabbar/record_active.png",
+        "text": "记录"
       }, {
         "pagePath": "pages/mine/index",
         "iconPath": "static/images/tabbar/mine.png",

@@ -105,7 +105,9 @@ class DatabaseService {
       this.getPointTableSQL(),
       this.getItemTableSQL(),
       this.getTaskTableSQL(),
-      this.getSyncMetadataTableSQL()
+      this.getSyncMetadataTableSQL(),
+      this.getRecordTableSQL(),
+      this.getItemResultTableSQL()
     ]
 
     for (const sql of tables) {
@@ -205,6 +207,55 @@ class DatabaseService {
         table_name TEXT PRIMARY KEY,
         version TEXT,
         last_sync_time TEXT
+      )
+    `
+  }
+
+  /**
+   * 巡检记录表SQL
+   */
+  getRecordTableSQL() {
+    return `
+      CREATE TABLE IF NOT EXISTS inspection_record (
+        record_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        point_id INTEGER NOT NULL,
+        inspector_id INTEGER NOT NULL,
+        verification_method TEXT,
+        nfc_uid TEXT,
+        qrcode_content TEXT,
+        inspection_time TEXT NOT NULL,
+        image_urls TEXT,
+        video_urls TEXT,
+        remark TEXT,
+        longitude REAL,
+        latitude REAL,
+        sync_status TEXT DEFAULT 'PENDING',
+        sync_time TEXT,
+        create_time TEXT DEFAULT (datetime('now', 'localtime')),
+        version INTEGER DEFAULT 1
+      )
+    `
+  }
+
+  /**
+   * 巡查项目结果表SQL
+   */
+  getItemResultTableSQL() {
+    return `
+      CREATE TABLE IF NOT EXISTS inspection_item_result (
+        result_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        record_id INTEGER NOT NULL,
+        item_id INTEGER NOT NULL,
+        item_name TEXT NOT NULL,
+        item_type TEXT NOT NULL,
+        actual_value TEXT NOT NULL,
+        is_abnormal INTEGER DEFAULT 0,
+        abnormal_remark TEXT,
+        sync_status TEXT DEFAULT 'PENDING',
+        sync_time TEXT,
+        create_time TEXT DEFAULT (datetime('now', 'localtime')),
+        version INTEGER DEFAULT 1
       )
     `
   }
@@ -568,6 +619,142 @@ class DatabaseService {
    */
   async rollback() {
     await this.executeSql('ROLLBACK')
+  }
+
+  /**
+   * 保存巡检记录（单条）
+   * @param {Object} record 巡检记录对象
+   * @returns {Promise<number>} 返回插入的record_id
+   */
+  async saveInspectionRecord(record) {
+    const sql = `
+      INSERT INTO inspection_record (
+        task_id, point_id, inspector_id, verification_method,
+        nfc_uid, qrcode_content, inspection_time, image_urls,
+        video_urls, remark, longitude, latitude, sync_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+    const params = [
+      record.taskId,
+      record.pointId,
+      record.inspectorId,
+      record.verificationMethod || null,
+      record.nfcUid || null,
+      record.qrcodeContent || null,
+      record.inspectionTime || new Date().toISOString(),
+      JSON.stringify(record.imageUrls || []),
+      JSON.stringify(record.videoUrls || []),
+      record.remark || null,
+      record.longitude || null,
+      record.latitude || null,
+      record.syncStatus || 'PENDING'
+    ]
+
+    await this.executeSql(sql, params)
+
+    // 获取最后插入的ID
+    const result = await this.query('SELECT last_insert_rowid() as id')
+    return result[0].id
+  }
+
+  /**
+   * 保存巡查项目结果（批量）
+   * @param {number} recordId 巡检记录ID
+   * @param {Array} results 项目结果数组
+   */
+  async saveItemResults(recordId, results) {
+    for (const result of results) {
+      const sql = `
+        INSERT INTO inspection_item_result (
+          record_id, item_id, item_name, item_type, actual_value,
+          is_abnormal, abnormal_remark, sync_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `
+      const params = [
+        recordId,
+        result.itemId,
+        result.itemName,
+        result.itemType,
+        result.actualValue,
+        result.isAbnormal || 0,
+        result.abnormalRemark || null,
+        result.syncStatus || 'PENDING'
+      ]
+
+      await this.executeSql(sql, params)
+    }
+  }
+
+  /**
+   * 查询任务的巡检记录
+   * @param {number} taskId 任务ID
+   * @returns {Promise<Array>} 巡检记录列表
+   */
+  async queryRecordsByTaskId(taskId) {
+    const sql = `
+      SELECT * FROM inspection_record
+      WHERE task_id = ?
+      ORDER BY inspection_time DESC
+    `
+    return await this.query(sql, [taskId])
+  }
+
+  /**
+   * 查询巡检记录的项目结果
+   * @param {number} recordId 记录ID
+   * @returns {Promise<Array>} 项目结果列表
+   */
+  async queryItemResultsByRecordId(recordId) {
+    const sql = `
+      SELECT * FROM inspection_item_result
+      WHERE record_id = ?
+      ORDER BY result_id
+    `
+    return await this.query(sql, [recordId])
+  }
+
+  /**
+   * 查询待同步的巡检记录数量
+   * @returns {Promise<number>} 待同步记录数
+   */
+  async getPendingRecordsCount() {
+    const sql = `
+      SELECT COUNT(*) as count
+      FROM inspection_record
+      WHERE sync_status = 'PENDING'
+    `
+    const result = await this.query(sql)
+    return result[0].count
+  }
+
+  /**
+   * 更新巡检记录的同步状态
+   * @param {number} recordId 记录ID
+   * @param {string} status 同步状态（PENDING/SYNCED/FAILED）
+   */
+  async updateRecordSyncStatus(recordId, status) {
+    const sql = `
+      UPDATE inspection_record
+      SET sync_status = ?, sync_time = ?
+      WHERE record_id = ?
+    `
+    await this.executeSql(sql, [status, new Date().toISOString(), recordId])
+  }
+
+  /**
+   * 查询点位的已巡检状态
+   * @param {number} taskId 任务ID
+   * @param {number} pointId 点位ID
+   * @returns {Promise<boolean>} 是否已巡检
+   */
+  async isPointInspected(taskId, pointId) {
+    const sql = `
+      SELECT COUNT(*) as count
+      FROM inspection_record
+      WHERE task_id = ? AND point_id = ?
+    `
+    const result = await this.query(sql, [taskId, pointId])
+    return result[0].count > 0
   }
 
   /**

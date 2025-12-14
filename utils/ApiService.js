@@ -10,15 +10,15 @@ import StorageService from './StorageService'
 
 class ApiService {
   constructor() {
-    // 动态BaseURL，从本地存储读取
-    this.baseURL = this._getBaseURL()
     // 默认超时时间（10秒）
     this.timeout = 10000
+    // 注意：不在构造函数中缓存baseURL，每次请求时动态获取
   }
 
   /**
    * 获取BaseURL
    * 优先从本地存储读取，未配置则使用默认值
+   * 注意：每次调用都会动态读取，确保使用最新配置
    */
   _getBaseURL() {
     const serverUrl = StorageService.getServerUrl()
@@ -26,6 +26,7 @@ class ApiService {
       return serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl
     }
     // 默认URL（开发环境使用）
+    // 注意：真机测试时请将localhost改为电脑的实际IP地址，如：http://192.168.1.100:8080
     return 'http://localhost:8080'
   }
 
@@ -43,11 +44,9 @@ class ApiService {
       throw new Error('服务器地址必须以http://或https://开头')
     }
 
-    // 去除尾部的斜杠
-    this.baseURL = url.endsWith('/') ? url.slice(0, -1) : url
-
-    // 保存到本地存储
-    StorageService.setServerUrl(url)
+    // 去除尾部的斜杠，保存到本地存储
+    const formattedUrl = url.endsWith('/') ? url.slice(0, -1) : url
+    StorageService.setServerUrl(formattedUrl)
   }
 
   /**
@@ -65,7 +64,8 @@ class ApiService {
     if (!path.startsWith('/')) {
       path = '/' + path
     }
-    return this.baseURL + path
+    // 每次构建URL时动态获取baseURL，确保使用最新配置
+    return this._getBaseURL() + path
   }
 
   /**
@@ -185,6 +185,10 @@ class ApiService {
     const requestHeaders = this._getHeaders({ headers, isToken })
     const requestData = this._processRequestData(data, method)
 
+    // 调试日志：打印请求信息
+    console.log('[ApiService] 请求URL:', requestUrl)
+    console.log('[ApiService] 当前配置的服务器地址:', this._getBaseURL())
+
     return new Promise((resolve, reject) => {
       uni.request({
         url: requestUrl,
@@ -265,25 +269,35 @@ class ApiService {
    */
   async testConnection(url = null) {
     try {
-      const originalBaseURL = this.baseURL
-      const testUrl = url || this.baseURL
+      const testUrl = url || this._getBaseURL()
 
-      // 临时设置BaseURL（如果提供了url参数）
-      if (url && url !== this.baseURL) {
-        this.baseURL = url.endsWith('/') ? url.slice(0, -1) : url
+      // 临时保存当前配置的地址
+      const currentUrl = StorageService.getServerUrl()
+
+      // 如果提供了测试URL，临时设置它（不持久化）
+      if (url && url !== currentUrl) {
+        // 临时设置，仅用于本次测试
+        StorageService.setServerUrl(url)
       }
 
-      // 尝试访问健康检查接口
-      await this.get('/health', {}, { isToken: false })
+      try {
+        // 尝试访问健康检查接口
+        await this.get('/health', {}, { isToken: false })
 
-      // 恢复原始BaseURL
-      if (url && url !== originalBaseURL) {
-        this.baseURL = originalBaseURL
-      }
-
-      return {
-        success: true,
-        message: '连接成功'
+        return {
+          success: true,
+          message: '连接成功'
+        }
+      } finally {
+        // 恢复原始配置（如果修改过）
+        if (url && url !== currentUrl) {
+          if (currentUrl) {
+            StorageService.setServerUrl(currentUrl)
+          } else {
+            // 如果原来没有配置，清空临时配置
+            uni.removeStorageSync('server_url')
+          }
+        }
       }
     } catch (error) {
       return {

@@ -9,7 +9,7 @@
 
 import request from '@/utils/request'
 import StorageService from '@/utils/StorageService'
-import DatabaseService from '@/services/DatabaseService'
+import DatabaseService from '@/utils/DatabaseService'
 
 class DataSyncService {
   constructor() {
@@ -209,28 +209,28 @@ class DataSyncService {
    * 保存路线数据到本地 SQLite 数据库
    */
   async saveRoutesToLocal(data) {
-    await DatabaseService.saveRoutes(data)
+    await DatabaseService.syncRoutes(data)
   }
 
   /**
    * 保存点位数据到本地 SQLite 数据库
    */
   async savePointsToLocal(data) {
-    await DatabaseService.savePoints(data)
+    await DatabaseService.syncPoints(data)
   }
 
   /**
    * 保存巡查项目数据到本地 SQLite 数据库
    */
   async saveInspectionItemsToLocal(data) {
-    await DatabaseService.saveInspectionItems(data)
+    await DatabaseService.syncItems(data)
   }
 
   /**
    * 保存任务数据到本地 SQLite 数据库
    */
   async saveTasksToLocal(data) {
-    await DatabaseService.saveTasks(data)
+    await DatabaseService.syncTasks(data)
   }
 
   /**

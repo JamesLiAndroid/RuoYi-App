@@ -103,6 +103,7 @@ import { onLoad } from "@dcloudio/uni-app"
 import ApiService from '@/utils/ApiService'
 import DatabaseService from '@/utils/DatabaseService'
 import StorageService from '@/utils/StorageService'
+import DatabaseDiagnostic from '@/utils/DatabaseDiagnostic'
 
 const { proxy } = getCurrentInstance()
 
@@ -138,6 +139,20 @@ onLoad(() => {
 // 检查更新
 async function checkForUpdates() {
   try {
+    // #ifdef H5
+    // H5环境直接显示提示，不加载数据版本
+    console.warn('[DataSync] H5环境，跳过版本检查')
+    updateInfo.value = {
+      items: [
+        { table: 'routes', name: '巡检路线', icon: '🗺️', hasUpdate: false },
+        { table: 'points', name: '巡检点位', icon: '📍', hasUpdate: false },
+        { table: 'items', name: '巡查项目', icon: '📝', hasUpdate: false },
+        { table: 'tasks', name: '巡检任务', icon: '✅', hasUpdate: false }
+      ]
+    }
+    return
+    // #endif
+
     // 获取服务器版本
     const serverVersion = await ApiService.get('/mobile/data-version')
     const localMetadata = StorageService.getSyncMetadata()
@@ -150,10 +165,10 @@ async function checkForUpdates() {
 
       // 转换表名为显示名称
       const tableNames = {
-        'routes_version': { name: '巡检路线', icon: '🗺️' },
-        'points_version': { name: '巡检点位', icon: '📍' },
-        'items_version': { name: '巡查项目', icon: '📝' },
-        'tasks_version': { name: '巡检任务', icon: '✅' }
+        'routesVersion': { name: '巡检路线', icon: '🗺️' },
+        'pointsVersion': { name: '巡检点位', icon: '📍' },
+        'itemsVersion': { name: '巡查项目', icon: '📝' },
+        'tasksVersion': { name: '巡检任务', icon: '✅' }
       }
 
       if (tableNames[table]) {
@@ -182,114 +197,252 @@ async function checkForUpdates() {
 async function startSync() {
   if (isStarting.value) return
 
+  console.log('[DataSync] 开始同步流程...')
+  console.log('[DataSync] 当前环境信息:', {
+    // #ifdef H5
+    platform: 'H5'
+    // #endif
+    // #ifdef APP-PLUS
+    platform: 'APP-PLUS'
+    // #endif
+    // #ifdef MP-WEIXIN
+    platform: 'MP-WEIXIN'
+    // #endif
+  })
+
   isStarting.value = true
 
   try {
-    // 初始化数据库
-    await DatabaseService.init()
+    // 检查运行环境
+    // #ifdef H5
+    console.warn('[DataSync] H5环境不支持完整的数据同步功能')
+    uni.showModal({
+      title: '环境提示',
+      content: 'H5环境暂不支持离线数据同步功能，请在真机或模拟器上测试',
+      showCancel: false,
+      success: () => {
+        // 模拟同步成功，直接跳转到任务列表
+        uni.reLaunch({ url: '/pages/index/TaskList' })
+      }
+    })
+    return
+    // #endif
+
+    console.log('[DataSync] 正在初始化数据库...')
+
+    // 添加超时控制
+    const initPromise = DatabaseService.init()
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('数据库初始化超时（10秒），请检查运行环境或重试'))
+      }, 10000)
+    })
+
+    // 使用Promise.race进行超时控制
+    await Promise.race([initPromise, timeoutPromise])
+
+    console.log('[DataSync] 数据库初始化成功，切换到进度页面')
 
     // 切换到进度页面
     currentStep.value = 'progress'
 
+    console.log('[DataSync] 开始同步数据...')
+
     // 开始同步数据
     await syncAllData()
+
+    console.log('[DataSync] 数据同步完成')
   } catch (error) {
-    console.error('初始化失败:', error)
-    uni.showToast({
-      title: '初始化失败: ' + error.message,
-      icon: 'error'
+    console.error('[DataSync] 同步失败:', error)
+
+    // 显示更友好的错误提示
+    let errorMsg = error.message || '同步失败'
+
+    // 判断是否是环境问题
+    if (errorMsg.includes('H5环境') || errorMsg.includes('不支持SQLite')) {
+      errorMsg = 'H5浏览器不支持离线功能，请在手机APP或模拟器中测试'
+    } else if (errorMsg.includes('plus对象')) {
+      errorMsg = 'APP环境未就绪，请在真机或HBuilderX模拟器中运行'
+    }
+
+    uni.showModal({
+      title: '同步失败',
+      content: errorMsg,
+      showCancel: true,
+      cancelText: '取消',
+      confirmText: '重试',
+      success: (res) => {
+        if (res.confirm) {
+          // 用户点击重试，重置状态后重新同步
+          currentStep.value = 'description'
+          isStarting.value = false
+        } else {
+          // 用户取消，返回登录页
+          uni.navigateBack()
+        }
+      }
     })
+
+    // 重置状态
+    currentStep.value = 'description'
   } finally {
+    console.log('[DataSync] 重置isStarting状态')
     isStarting.value = false
   }
 }
 
 // 同步所有数据
 async function syncAllData() {
-  const serverVersion = await ApiService.get('/mobile/data-version')
-  const localMetadata = StorageService.getSyncMetadata()
-  let completedItems = 0
-  let errorCount = 0
+  console.log('[DataSync] syncAllData: 开始获取服务器版本...')
 
-  for (const item of syncItems.value) {
-    const versionKey = `${item.key}_version`
-    const serverVersionValue = serverVersion[versionKey]
-    const localVersionValue = localMetadata[versionKey]
+  try {
+    const serverVersion = await ApiService.get('/mobile/data-version')
+    console.log('[DataSync] 服务器版本:', serverVersion)
 
-    // 如果版本相同，跳过
-    if (serverVersionValue === localVersionValue) {
-      item.status = 'completed'
-      completedItems++
-      continue
+    const localMetadata = StorageService.getSyncMetadata()
+    console.log('[DataSync] 本地元数据:', localMetadata)
+
+    let completedItems = 0
+    let errorCount = 0
+
+    for (const item of syncItems.value) {
+      console.log(`[DataSync] 处理同步项: ${item.name}`)
+
+      const versionKey = `${item.key}_version`
+      const serverVersionValue = serverVersion[versionKey]
+      const localVersionValue = localMetadata[versionKey]
+
+      console.log(`[DataSync] ${item.name} - 服务器版本: ${serverVersionValue}, 本地版本: ${localVersionValue}`)
+
+      // 如果版本相同，跳过
+      if (serverVersionValue === localVersionValue) {
+        console.log(`[DataSync] ${item.name} 版本相同，跳过同步`)
+        item.status = 'completed'
+        completedItems++
+        continue
+      }
+
+      // 开始同步
+      console.log(`[DataSync] ${item.name} 开始同步...`)
+      item.status = 'syncing'
+      updateOverallProgress(completedItems, syncItems.value.length)
+
+      try {
+        await syncItemData(item, serverVersionValue)
+        item.status = 'completed'
+        completedItems++
+        errorCount = 0 // 重置错误计数
+        console.log(`[DataSync] ${item.name} 同步成功`)
+      } catch (error) {
+        console.error(`[DataSync] 同步${item.name}失败:`, error)
+        item.status = 'error'
+        item.error = error.message
+        errorCount++
+      }
+
+      updateOverallProgress(completedItems, syncItems.value.length)
     }
 
-    // 开始同步
-    item.status = 'syncing'
-    updateOverallProgress(completedItems, syncItems.value.length)
+    // 标记同步完成
+    syncProgress.value.isCompleted = true
+    syncProgress.value.hasError = errorCount > 0
 
+    console.log('[DataSync] syncAllData: 所有同步任务完成')
+
+    // 运行数据库诊断，验证同步结果
+    console.log('\n========== 同步完成后运行诊断 ==========')
+    await DatabaseDiagnostic.diagnose()
+
+    // 额外验证：检查任务和路线的关联
+    console.log('\n========== 验证任务-路线关联 ==========')
     try {
-      await syncItemData(item, serverVersionValue)
-      item.status = 'completed'
-      completedItems++
-      errorCount = 0 // 重置错误计数
+      const tasks = await DatabaseService.findAll('inspection_task')
+      console.log('[DataSync] 任务总数:', tasks.length)
+
+      if (tasks.length > 0) {
+        const firstTask = tasks[0]
+        console.log('[DataSync] 第一个任务:', firstTask)
+        console.log('[DataSync] 第一个任务的route_id:', firstTask.route_id, '类型:', typeof firstTask.route_id)
+
+        // 尝试查询对应的路线
+        const route = await DatabaseService.findById('inspection_route', firstTask.route_id, 'route_id')
+        console.log('[DataSync] 查询对应路线结果:', route)
+
+        // 如果找不到，列出所有路线的ID
+        if (!route) {
+          const allRoutes = await DatabaseService.findAll('inspection_route')
+          console.log('[DataSync] ⚠️ 找不到对应路线！所有路线ID列表:')
+          allRoutes.forEach(r => {
+            console.log(`  - route_id: ${r.route_id} (类型: ${typeof r.route_id}), route_name: ${r.route_name}`)
+          })
+        }
+      }
     } catch (error) {
-      console.error(`同步${item.name}失败:`, error)
-      item.status = 'error'
-      item.error = error.message
-      errorCount++
+      console.error('[DataSync] 验证任务-路线关联失败:', error)
     }
-
-    updateOverallProgress(completedItems, syncItems.value.length)
+    console.log('========== 诊断完成 ==========\n')
+  } catch (error) {
+    console.error('[DataSync] syncAllData 失败:', error)
+    throw error
   }
-
-  // 标记同步完成
-  syncProgress.value.isCompleted = true
-  syncProgress.value.hasError = errorCount > 0
 }
 
 // 同步单个数据项
 async function syncItemData(item, serverVersion) {
+  console.log(`[DataSync] syncItemData: ${item.name} 开始`)
+
   try {
     let data = []
 
     // 根据数据类型获取数据
     switch (item.key) {
       case 'routes':
+        console.log(`[DataSync] 获取路线数据...`)
         data = await ApiService.get('/mobile/routes')
+        console.log(`[DataSync] 获取到 ${data.length} 条路线数据`)
         item.progress = 20
         await DatabaseService.syncRoutes(data)
         item.progress = 100
-        updateMetadata('routes_version', serverVersion)
+        updateMetadata('routes', serverVersion)
         break
 
       case 'points':
+        console.log(`[DataSync] 获取点位数据...`)
         data = await ApiService.get('/mobile/points')
+        console.log(`[DataSync] 获取到 ${data.length} 条点位数据`)
         item.progress = 20
         await DatabaseService.syncPoints(data)
         item.progress = 100
-        updateMetadata('points_version', serverVersion)
+        updateMetadata('points', serverVersion)
         break
 
       case 'items':
+        console.log(`[DataSync] 获取巡查项目数据...`)
         data = await ApiService.get('/mobile/inspection-items')
+        console.log(`[DataSync] 获取到 ${data.length} 条项目数据`)
         item.progress = 20
         await DatabaseService.syncItems(data)
         item.progress = 100
-        updateMetadata('items_version', serverVersion)
+        updateMetadata('items', serverVersion)
         break
 
       case 'tasks':
+        console.log(`[DataSync] 获取任务数据...`)
         data = await ApiService.get('/mobile/tasks')
+        console.log(`[DataSync] 获取到 ${data.length} 条任务数据`)
         item.progress = 20
         await DatabaseService.syncTasks(data)
         item.progress = 100
-        updateMetadata('tasks_version', serverVersion)
+        updateMetadata('tasks', serverVersion)
         break
 
       default:
         throw new Error('未知的数据类型')
     }
+
+    console.log(`[DataSync] syncItemData: ${item.name} 完成`)
   } catch (error) {
+    console.error(`[DataSync] syncItemData: ${item.name} 失败:`, error)
     throw new Error(`同步${item.name}失败: ${error.message}`)
   }
 }
@@ -375,9 +528,9 @@ function completeSync() {
     icon: 'success'
   })
 
-  // 跳转到首页
+  // 跳转到任务列表首页
   setTimeout(() => {
-    uni.reLaunch({ url: '/pages/index' })
+    uni.reLaunch({ url: '/pages/index/TaskList' })
   }, 500)
 }
 </script>

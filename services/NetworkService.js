@@ -7,6 +7,8 @@
  * @date 2025-11-25
  */
 
+import ApiService from '@/utils/ApiService'
+
 class NetworkService {
   constructor() {
     this.isOnline = false
@@ -124,23 +126,14 @@ class NetworkService {
       console.log('检查服务器健康状态...')
       const startTime = Date.now()
 
-      // 发送健康检查请求
-      const response = await uni.request({
-        url: '/health',
-        method: 'GET',
-        timeout: 5000
-      })
+      // 使用 ApiService 发送健康检查请求
+      const response = await ApiService.get('/health')
 
       const duration = Date.now() - startTime
       console.log(`健康检查完成，耗时: ${duration}ms`, response)
 
       // 如果响应正常，标记为可达
-      if (response.statusCode === 200) {
-        this.serverReachable = true
-      } else {
-        this.serverReachable = false
-        console.warn('服务器响应异常:', response.statusCode)
-      }
+      this.serverReachable = true
     } catch (error) {
       console.error('健康检查失败:', error)
       this.serverReachable = false

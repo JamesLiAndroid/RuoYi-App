@@ -3,7 +3,7 @@
   import { getToken } from '@/utils/auth'
   import { useConfigStore } from '@/store'
   import StorageService from '@/utils/StorageService'
-  import DatabaseService from '@/services/DatabaseService'
+  import DatabaseService from '@/utils/DatabaseService'
   import { getCurrentInstance } from "vue"
   import { onLaunch } from '@dcloudio/uni-app'
 
@@ -32,7 +32,7 @@
   // 初始化数据库
   async function initDatabase() {
     try {
-      await DatabaseService.initDatabase()
+      await DatabaseService.init()
       console.log('App启动：SQLite数据库初始化成功')
     } catch (error) {
       console.error('App启动：SQLite数据库初始化失败', error)

@@ -52,6 +52,12 @@
             <view>编辑资料</view>
           </view>
         </view>
+        <view class="list-cell list-cell-arrow" @click="handleOfflineData">
+          <view class="menu-item-box">
+            <view class="iconfont icon-download menu-icon"></view>
+            <view>离线数据管理</view>
+          </view>
+        </view>
         <view class="list-cell list-cell-arrow" @click="handleHelp">
           <view class="menu-item-box">
             <view class="iconfont icon-help menu-icon"></view>
@@ -95,6 +101,12 @@
 
   function handleToSetting() {
     proxy.$tab.navigateTo('/pages/mine/setting/index')
+  }
+
+  function handleOfflineData() {
+    uni.navigateTo({
+      url: '/pages/offline-data/index'
+    })
   }
 
   function handleToLogin() {

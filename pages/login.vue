@@ -379,8 +379,8 @@ async function checkDataVersion() {
     if (needsSync.length > 0) {
       proxy.$tab.reLaunch('/pages/data-sync')
     } else {
-      // 无需同步，直接跳转到首页
-      proxy.$tab.reLaunch('/pages/index')
+      // 无需同步，直接跳转到任务列表首页
+      proxy.$tab.reLaunch('/pages/index/TaskList')
     }
   } catch (error) {
     console.error('检查数据版本失败:', error)
