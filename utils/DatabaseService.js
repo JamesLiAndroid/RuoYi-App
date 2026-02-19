@@ -270,12 +270,41 @@ class DatabaseService {
     console.log('[DatabaseService] _createIndexes: 开始创建索引')
 
     const indexes = [
-      // inspection_record 表索引
+      // inspection_point 表索引 - 用于NFC卡匹配
+      'CREATE INDEX IF NOT EXISTS idx_point_card_id ON inspection_point(card_id)',
+      'CREATE INDEX IF NOT EXISTS idx_point_dept_id ON inspection_point(dept_id)',
+      'CREATE INDEX IF NOT EXISTS idx_point_device_type ON inspection_point(device_type)',
+
+      // inspection_route 表索引
+      'CREATE INDEX IF NOT EXISTS idx_route_dept_id ON inspection_route(dept_id)',
+      'CREATE INDEX IF NOT EXISTS idx_route_enabled ON inspection_route(is_enabled)',
+
+      // inspection_route_point 表索引 - 用于路线点位关联查询
+      'CREATE INDEX IF NOT EXISTS idx_route_point_route ON inspection_route_point(route_id)',
+      'CREATE INDEX IF NOT EXISTS idx_route_point_point ON inspection_route_point(point_id)',
+      'CREATE INDEX IF NOT EXISTS idx_route_point_order ON inspection_route_point(route_id, point_order)',
+
+      // inspection_item 表索引 - 用于巡查项目查询
+      'CREATE INDEX IF NOT EXISTS idx_item_point_id ON inspection_item(point_id)',
+      'CREATE INDEX IF NOT EXISTS idx_item_type ON inspection_item(item_type)',
+      'CREATE INDEX IF NOT EXISTS idx_item_order ON inspection_item(point_id, order_num)',
+
+      // inspection_task 表索引 - 用于任务查询
+      'CREATE INDEX IF NOT EXISTS idx_task_route_id ON inspection_task(route_id)',
+      'CREATE INDEX IF NOT EXISTS idx_task_date ON inspection_task(task_date)',
+      'CREATE INDEX IF NOT EXISTS idx_task_status ON inspection_task(task_status)',
+      'CREATE INDEX IF NOT EXISTS idx_task_inspector ON inspection_task(inspector_id)',
+
+      // inspection_record 表索引 - 用于巡检记录查询
       'CREATE INDEX IF NOT EXISTS idx_record_task_id ON inspection_record(task_id)',
       'CREATE INDEX IF NOT EXISTS idx_record_point_id ON inspection_record(point_id)',
+      'CREATE INDEX IF NOT EXISTS idx_record_nfc_uid ON inspection_record(nfc_uid)',
+      'CREATE INDEX IF NOT EXISTS idx_record_verification ON inspection_record(verification_method)',
       'CREATE INDEX IF NOT EXISTS idx_record_sync_status ON inspection_record(sync_status)',
       'CREATE INDEX IF NOT EXISTS idx_record_deleted ON inspection_record(deleted)',
-      // inspection_item_result 表索引
+      'CREATE INDEX IF NOT EXISTS idx_record_time ON inspection_record(inspection_time)',
+
+      // inspection_item_result 表索引 - 用于项目结果查询
       'CREATE INDEX IF NOT EXISTS idx_result_record_id ON inspection_item_result(record_id)',
       'CREATE INDEX IF NOT EXISTS idx_result_item_id ON inspection_item_result(item_id)',
       'CREATE INDEX IF NOT EXISTS idx_result_item_type ON inspection_item_result(item_type)',
