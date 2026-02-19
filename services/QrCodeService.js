@@ -5,6 +5,10 @@
  */
 
 class QrCodeService {
+  constructor() {
+    this.lastScanTime = 0 // AC15: 防抖机制
+  }
+
   /**
    * 解析二维码内容
    * @param {string} content - 二维码扫描内容
@@ -12,8 +16,34 @@ class QrCodeService {
    */
   parse(content) {
     try {
+      // AC15: 防抖机制（500ms）
+      const now = Date.now()
+      if (now - this.lastScanTime < 500) {
+        return {
+          success: false,
+          error: 'SCAN_TOO_FAST',
+          message: '扫描过快，请稍后再试'
+        }
+      }
+      this.lastScanTime = now
+
+      // AC15: 超长二维码处理（限制200字符）
+      if (content.length > 200) {
+        return {
+          success: false,
+          error: 'CONTENT_TOO_LONG',
+          message: '二维码内容过长，请检查二维码是否正确'
+        }
+      }
+
       // 容错处理：自动trim和大小写转换
       content = content.trim().toUpperCase()
+
+      // AC15: 特殊字符过滤（保留字母、数字、分隔符）
+      content = content.replace(/[^\w|,;]/g, '')
+
+      // AC15: 多分隔符支持（统一转换为|）
+      content = content.replace(/[,;]/g, '|')
 
       // 检查格式（大小写不敏感）
       if (!content.startsWith('INSPECT|') && !content.startsWith('INSPCT|')) {

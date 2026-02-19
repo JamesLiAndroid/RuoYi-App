@@ -1,35 +1,101 @@
 /**
  * 点位匹配服务 - 根据NFC卡ID匹配对应巡检点位
  * 验证巡检顺序，检查点位是否有效
+ * 包含缓存机制，提升匹配性能
  */
 
 import TaskService from './TaskService'
+import DatabaseService from '@/utils/DatabaseService'
 
-class PointMatchingService {
+/**
+ * 点位匹配缓存类
+ * 使用Map存储cardId到点位信息的映射，提升匹配性能
+ */
+class PointMatchingCache {
   constructor() {
-    this.db = null
+    this.cache = new Map() // cardId -> pointInfo
+    this.maxSize = 1000 // 最大缓存1000个点位
+    this.hits = 0 // 缓存命中次数
+    this.misses = 0 // 缓存未命中次数
   }
 
   /**
-   * 初始化数据库
+   * 从缓存获取点位信息
+   * @param {string} cardId - 卡ID
+   * @returns {Object|null} 点位信息或null
+   */
+  get(cardId) {
+    if (this.cache.has(cardId)) {
+      this.hits++
+      return this.cache.get(cardId)
+    }
+    this.misses++
+    return null
+  }
+
+  /**
+   * 设置缓存
+   * @param {string} cardId - 卡ID
+   * @param {Object} pointInfo - 点位信息
+   */
+  set(cardId, pointInfo) {
+    // 如果缓存已满，清除最早的条目（LRU策略简化版）
+    if (this.cache.size >= this.maxSize) {
+      const firstKey = this.cache.keys().next().value
+      this.cache.delete(firstKey)
+    }
+    this.cache.set(cardId, pointInfo)
+  }
+
+  /**
+   * 清空缓存
+   */
+  clear() {
+    this.cache.clear()
+    this.hits = 0
+    this.misses = 0
+  }
+
+  /**
+   * 获取缓存命中率
+   * @returns {number} 命中率（0-1之间）
+   */
+  getHitRate() {
+    const total = this.hits + this.misses
+    return total > 0 ? (this.hits / total) : 0
+  }
+
+  /**
+   * 获取缓存统计信息
+   * @returns {Object} 统计信息
+   */
+  getStats() {
+    return {
+      size: this.cache.size,
+      maxSize: this.maxSize,
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: this.getHitRate()
+    }
+  }
+}
+
+class PointMatchingService {
+  constructor() {
+    this.cache = new PointMatchingCache() // 初始化缓存
+  }
+
+  /**
+   * 初始化数据库（使用DatabaseService，不需要手动初始化）
    */
   async initDatabase() {
-    if (!this.db) {
-      //#ifdef APP-PLUS
-      this.db = plus.sqlite.openDatabaseSync({
-        name: 'inspection.db'
-      })
-      //#endif
-
-      //#ifdef H5
-      // H5环境使用浏览器本地存储
-      this.db = 'sqlite'
-      //#endif
-    }
+    // DatabaseService 在应用启动时已初始化，这里不需要额外操作
+    console.log('[PointMatching] 使用全局DatabaseService')
   }
 
   /**
    * 根据NFC卡UID匹配点位
+   * 优先从缓存查找，缓存未命中再查数据库
    * @param {string} nfcUid - NFC卡UID
    * @param {number} routeId - 路线ID
    * @returns {Object} 匹配结果
@@ -38,10 +104,37 @@ class PointMatchingService {
     try {
       await this.initDatabase()
 
-      // 查询该路线下对应卡ID的点位
-      const point = await this.findPointByCardId(nfcUid, routeId)
+      console.log('[PointMatching] 开始匹配点位:', nfcUid, 'routeId:', routeId)
+
+      // 先从缓存查找
+      let point = this.cache.get(nfcUid)
+      let fromCache = false
+
+      if (point) {
+        console.log('[PointMatching] 缓存命中:', point.point_name)
+        fromCache = true
+
+        // 验证点位是否属于当前路线
+        if (point.route_id !== routeId) {
+          console.warn('[PointMatching] 缓存中的点位不属于当前路线')
+          point = null // 重新查询
+        }
+      }
+
+      // 缓存未命中或路线不匹配，从数据库查询
+      if (!point) {
+        console.log('[PointMatching] 缓存未命中，从数据库查询')
+        point = await this.findPointByCardId(nfcUid, routeId)
+
+        // 查询成功，加入缓存
+        if (point) {
+          this.cache.set(nfcUid, point)
+          console.log('[PointMatching] 点位已加入缓存:', point.point_name)
+        }
+      }
 
       if (!point) {
+        console.warn('[PointMatching] 未找到匹配的点位')
         return {
           success: false,
           error: '该卡ID未绑定到当前路线的任何点位',
@@ -57,18 +150,21 @@ class PointMatchingService {
           success: false,
           error: orderCheck.message,
           code: 'ORDER_INVALID',
-          expectedPoint: orderCheck.expectedPoint
+          expectedPoint: orderCheck.expectedPoint,
+          point: point, // 返回匹配到的点位信息
+          fromCache: fromCache
         }
       }
 
       return {
         success: true,
         point: point,
-        isCorrectOrder: orderCheck.isCorrectOrder
+        isCorrectOrder: orderCheck.isCorrectOrder,
+        fromCache: fromCache
       }
 
     } catch (error) {
-      console.error('点位匹配失败:', error)
+      console.error('[PointMatching] 点位匹配失败:', error)
       return {
         success: false,
         error: '匹配失败: ' + (error.message || '未知错误'),
@@ -81,35 +177,23 @@ class PointMatchingService {
    * 根据卡ID查找点位
    */
   async findPointByCardId(cardId, routeId) {
-    //#ifdef APP-PLUS
-    const sql = `
-      SELECT p.point_id, p.point_name, p.point_code, p.card_id,
-             rrp.point_order, rrp.route_id
-      FROM inspection_point p
-      LEFT JOIN inspection_route_point rrp ON p.point_id = rrp.point_id
-      WHERE p.card_id = ? AND rrp.route_id = ?
-    `
+    try {
+      const sql = `
+        SELECT p.point_id, p.point_name, p.point_code, p.card_id,
+               rrp.point_order, rrp.route_id
+        FROM inspection_point p
+        LEFT JOIN inspection_route_point rrp ON p.point_id = rrp.point_id
+        WHERE p.card_id = ? AND rrp.route_id = ?
+      `
 
-    const result = plus.sqlite.selectSqlSync({
-      db: this.db,
-      sql: sql,
-      'arguments': [cardId, routeId]
-    })
+      const result = await DatabaseService._query(sql, [cardId, routeId])
 
-    return result.length > 0 ? result[0] : null
-    //#endif
+      return result.length > 0 ? result[0] : null
 
-    //#ifdef H5
-    // H5环境模拟数据
-    return {
-      point_id: 1,
-      point_name: '模拟点位1号',
-      point_code: 'P001',
-      card_id: cardId,
-      point_order: 1,
-      route_id: routeId
+    } catch (error) {
+      console.error('[PointMatching] 查询点位失败:', error)
+      return null
     }
-    //#endif
   }
 
   /**
@@ -169,11 +253,7 @@ class PointMatchingService {
       ORDER BY rrp.point_order
     `
 
-    const result = plus.sqlite.selectSqlSync({
-      db: this.db,
-      sql: sql,
-      'arguments': [routeId]
-    })
+    const result = await DatabaseService._query(sql, [routeId])
 
     return result || []
     //#endif
@@ -194,11 +274,7 @@ class PointMatchingService {
       WHERE route_id = ?
     `
 
-    const result = plus.sqlite.selectSqlSync({
-      db: this.db,
-      sql: sql,
-      'arguments': [routeId]
-    })
+    const result = await DatabaseService._query(sql, [routeId])
 
     return result[0]?.total || 0
     //#endif
@@ -221,11 +297,7 @@ class PointMatchingService {
       WHERE rrp.route_id = ? AND rrp.point_order = ?
     `
 
-    const result = plus.sqlite.selectSqlSync({
-      db: this.db,
-      sql: sql,
-      'arguments': [routeId, order]
-    })
+    const result = await DatabaseService._query(sql, [routeId, order])
 
     return result.length > 0 ? result[0] : null
     //#endif
@@ -289,11 +361,7 @@ class PointMatchingService {
       WHERE p.point_id = ?
     `
 
-    const result = plus.sqlite.selectSqlSync({
-      db: this.db,
-      sql: sql,
-      'arguments': [pointId]
-    })
+    const result = await DatabaseService._query(sql, [pointId])
 
     return result.length > 0 ? result[0] : null
     //#endif
@@ -308,6 +376,98 @@ class PointMatchingService {
       card_id: `CARD${pointId.toString().padStart(8, '0')}`
     }
     //#endif
+  }
+
+  /**
+   * 预加载路线的所有点位到缓存
+   * @param {number} routeId - 路线ID
+   * @returns {Object} 加载结果
+   */
+  async preloadCache(routeId) {
+    try {
+      await this.initDatabase()
+
+      console.log('[PointMatching] 开始预加载路线缓存, routeId:', routeId)
+
+      //#ifdef APP-PLUS
+      const sql = `
+        SELECT p.point_id, p.point_name, p.point_code, p.card_id,
+               rrp.point_order, rrp.route_id
+        FROM inspection_point p
+        INNER JOIN inspection_route_point rrp ON p.point_id = rrp.point_id
+        WHERE rrp.route_id = ?
+        ORDER BY rrp.point_order
+      `
+
+      const result = await DatabaseService._query(sql, [routeId])
+
+      // 将所有点位加入缓存
+      let loadedCount = 0
+      if (result && result.length > 0) {
+        result.forEach(point => {
+          if (point.card_id) {
+            this.cache.set(point.card_id, point)
+            loadedCount++
+          }
+        })
+      }
+
+      console.log(`[PointMatching] 缓存预加载完成，共加载 ${loadedCount} 个点位`)
+
+      return {
+        success: true,
+        loadedCount: loadedCount,
+        totalPoints: result.length
+      }
+      //#endif
+
+      //#ifdef H5
+      // H5环境模拟数据
+      console.log('[PointMatching] H5环境，模拟缓存预加载')
+      for (let i = 1; i <= 10; i++) {
+        const point = {
+          point_id: i,
+          point_name: `模拟点位${i}号`,
+          point_code: `P${i.toString().padStart(3, '0')}`,
+          point_order: i,
+          route_id: routeId,
+          card_id: `CARD${i.toString().padStart(8, '0')}`
+        }
+        this.cache.set(point.card_id, point)
+      }
+
+      return {
+        success: true,
+        loadedCount: 10,
+        totalPoints: 10
+      }
+      //#endif
+
+    } catch (error) {
+      console.error('[PointMatching] 预加载缓存失败:', error)
+      return {
+        success: false,
+        error: '预加载缓存失败: ' + (error.message || '未知错误')
+      }
+    }
+  }
+
+  /**
+   * 获取缓存统计信息
+   * @returns {Object} 缓存统计
+   */
+  getCacheStats() {
+    const stats = this.cache.getStats()
+    console.log('[PointMatching] 缓存统计:', stats)
+    return stats
+  }
+
+  /**
+   * 清空缓存
+   */
+  clearCache() {
+    console.log('[PointMatching] 清空缓存')
+    this.cache.clear()
   }
 }
 
