@@ -88,6 +88,16 @@
       "navigationBarTitleText": "关于我们"
     }
   }, {
+    "path": "pages/offline-data/index",
+    "style": {
+      "navigationBarTitleText": "离线数据管理"
+    }
+  }, {
+    "path": "pages/upload-settings/index",
+    "style": {
+      "navigationBarTitleText": "上传设置"
+    }
+  }, {
     "path": "pages/common/webview/index",
     "style": {
       "navigationBarTitleText": "浏览网页"
