@@ -83,6 +83,7 @@ const emit = defineEmits(['close', 'success', 'error'])
 const isScanning = ref(false)
 const showPermissionGuide = ref(false)
 const lastScanTime = ref(0)
+const failedScanCount = ref(0) // AC14: 失败计数
 
 // 距离提示文本
 const distanceText = '距离15-30cm效果最佳'
@@ -106,6 +107,20 @@ async function initScanner() {
   }
 
   showPermissionGuide.value = false
+
+  // AC14: 首次使用引导
+  const hasShownGuide = uni.getStorageSync('qrcode_guide_shown')
+  if (!hasShownGuide) {
+    uni.showModal({
+      title: '扫码说明',
+      content: '将二维码对准扫描框，距离15-30cm，保持稳定。如光线不足，请到明亮处扫码。',
+      showCancel: false,
+      confirmText: '知道了',
+      success: () => {
+        uni.setStorageSync('qrcode_guide_shown', true)
+      }
+    })
+  }
 }
 
 // 请求权限
@@ -175,6 +190,17 @@ async function handleScanCode() {
         // 用户取消扫码不报错
         if (err.errMsg && err.errMsg.includes('cancel')) {
           return
+        }
+
+        // AC14: 失败计数和光线检测
+        failedScanCount.value++
+        if (failedScanCount.value >= 3) {
+          uni.showToast({
+            title: '光线不足，请到明亮处扫码',
+            icon: 'none',
+            duration: 3000
+          })
+          failedScanCount.value = 0
         }
 
         emit('error', {
