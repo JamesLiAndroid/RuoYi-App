@@ -275,6 +275,112 @@ class InspectionRecordService {
   }
 
   /**
+   * 完成巡检记录（AC2）
+   * @param {Object} data - 完成数据
+   * @returns {Object} 保存结果
+   */
+  async completeRecord(data) {
+    try {
+      await this.initDatabase()
+
+      const {
+        recordId,
+        status = 'COMPLETED',
+        imageUrls = null,
+        photoCount = 0,
+        inspectionTime = new Date().toISOString()
+      } = data
+
+      //#ifdef APP-PLUS
+      const sql = `
+        UPDATE inspection_record
+        SET status = ?,
+            image_urls = ?,
+            photo_count = ?,
+            inspection_time = ?,
+            update_time = ?
+        WHERE record_id = ?
+      `
+
+      await plus.sqlite.executeSqlSync({
+        db: this.db,
+        sql: sql,
+        arguments: [
+          status,
+          imageUrls,
+          photoCount,
+          inspectionTime,
+          new Date().toISOString(),
+          recordId
+        ]
+      })
+      //#endif
+
+      console.log('巡检记录完成:', { recordId, status, photoCount })
+
+      return {
+        success: true,
+        message: '记录完成成功'
+      }
+
+    } catch (error) {
+      console.error('完成巡检记录失败:', error)
+      return {
+        success: false,
+        error: '完成记录失败: ' + (error.message || '未知错误')
+      }
+    }
+  }
+
+  /**
+   * 更新照片路径和数量（AC2）
+   * @param {number} recordId - 记录ID
+   * @param {string} imageUrls - 照片路径（逗号分隔）
+   * @param {number} photoCount - 照片数量
+   * @returns {Object} 保存结果
+   */
+  async updatePhotoUrls(recordId, imageUrls, photoCount) {
+    try {
+      await this.initDatabase()
+
+      //#ifdef APP-PLUS
+      const sql = `
+        UPDATE inspection_record
+        SET image_urls = ?,
+            photo_count = ?,
+            update_time = ?
+        WHERE record_id = ?
+      `
+
+      await plus.sqlite.executeSqlSync({
+        db: this.db,
+        sql: sql,
+        arguments: [
+          imageUrls,
+          photoCount,
+          new Date().toISOString(),
+          recordId
+        ]
+      })
+      //#endif
+
+      console.log('照片路径更新成功:', { recordId, photoCount })
+
+      return {
+        success: true,
+        message: '照片路径更新成功'
+      }
+
+    } catch (error) {
+      console.error('更新照片路径失败:', error)
+      return {
+        success: false,
+        error: '更新照片路径失败: ' + (error.message || '未知错误')
+      }
+    }
+  }
+
+  /**
    * 标记记录为已同步
    * @param {number} recordId - 记录ID
    */

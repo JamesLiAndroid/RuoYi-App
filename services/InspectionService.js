@@ -290,8 +290,15 @@ class InspectionService {
       // 获取所有点位详细信息
       const points = []
       for (let i = 0; i < pointIds.length; i++) {
-        const pointId = pointIds[i]
-        console.log(`[InspectionService] 查询点位 ${i + 1}/${pointIds.length}, pointId:`, pointId)
+        const pointObj = pointIds[i]
+        // 提取pointId（兼容pointId和point_id两种格式）
+        const pointId = pointObj.pointId || pointObj.point_id
+        console.log(`[InspectionService] 查询点位 ${i + 1}/${pointIds.length}, pointId:`, pointId, ', 完整对象:', pointObj)
+
+        if (!pointId) {
+          console.warn('[InspectionService] 点位对象中没有pointId字段:', pointObj)
+          continue
+        }
 
         // 查询点位信息
         const pointSql = 'SELECT * FROM inspection_point WHERE point_id = ?'
