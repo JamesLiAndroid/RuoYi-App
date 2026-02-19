@@ -101,6 +101,7 @@ import { useConfigStore } from '@/store'
 import TaskService from '@/services/TaskService'
 import InspectionService from '@/services/InspectionService'
 import OfflineDataService from '@/services/OfflineDataService'
+import NfcService from '@/services/NfcService'
 import TaskCard from '@/components/TaskCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -181,6 +182,7 @@ onLoad(() => {
 onShow(() => {
   // 页面显示时刷新数据
   loadTasks()
+  loadPendingUploadCount() // AC11: 刷新待上传记录数
 })
 
 // 下拉刷新
@@ -361,40 +363,28 @@ function handleContinueInspection(task) {
 function handleViewDetails(task) {
   // 检查NFC是否可用
   // #ifdef APP-PLUS
-  if (!plus || !plus.nfc) {
+  const isAvailable = NfcService.isNfcAvailable()
+
+  if (!isAvailable) {
     uni.showModal({
-      title: 'NFC不可用',
-      content: '当前设备不支持NFC功能，无法进行巡检。请更换支持NFC的设备。',
-      showCancel: false,
-      confirmText: '知道了'
+      title: 'NFC未启用',
+      content: '请在系统设置中开启NFC功能后再进行巡检',
+      showCancel: true,
+      cancelText: '取消',
+      confirmText: '去设置',
+      success: (res) => {
+        if (res.confirm) {
+          // 打开NFC设置
+          NfcService.openNfcSettings()
+        }
+      }
     })
     return
   }
 
-  // 检查NFC是否已启用
-  plus.nfc.isEnabled({
-    success: () => {
-      // NFC已启用，跳转到任务详情
-      uni.navigateTo({
-        url: `/pages/task/TaskDetail?taskId=${task.task_id}`
-      })
-    },
-    fail: () => {
-      // NFC未启用
-      uni.showModal({
-        title: 'NFC未启用',
-        content: '请在系统设置中开启NFC功能后再进行巡检',
-        showCancel: true,
-        cancelText: '取消',
-        confirmText: '去设置',
-        success: (res) => {
-          if (res.confirm) {
-            // 打开系统设置
-            plus.runtime.openURL('settings://nfc')
-          }
-        }
-      })
-    }
+  // NFC可用，跳转到任务详情
+  uni.navigateTo({
+    url: `/pages/task/TaskDetail?taskId=${task.task_id}`
   })
   // #endif
 

@@ -80,6 +80,16 @@
       @mode-change="handleModeChange"
     />
 
+    <!-- NFC未开启警告 -->
+    <view v-if="scanMode === 'nfc' && !isNfcEnabled" class="nfc-warning">
+      <text class="warning-icon">⚠️</text>
+      <text class="warning-text">NFC未开启</text>
+      <view class="warning-actions">
+        <button class="warning-btn warning-btn-primary" @click="handleGoEnableNfc">去开启</button>
+        <button class="warning-btn warning-btn-secondary" @click="handleSwitchToQrCode">切换扫码</button>
+      </view>
+    </view>
+
     <!-- 使用警告提示 -->
     <view v-if="usageWarning" class="usage-warning">
       <text class="warning-icon">⚠️</text>
@@ -349,6 +359,7 @@ const currentRecordId = ref(null) // 当前巡检记录ID
 
 // 任务和点位数据（初始值为null，在onLoad中赋值）
 const taskId = ref(null)
+const routeId = ref(null)  // 当前路线ID
 const routeName = ref('')
 const taskDate = ref('')
 const timeSlot = ref('')
@@ -435,6 +446,25 @@ async function initData() {
       await QuickDiagnostic.checkTask(taskId.value)
     }
 
+    // AC10: 启动时检测NFC状态
+    const nfcRecommendation = nfcService.getStartupRecommendation()
+    if (nfcRecommendation.action === 'prompt_choice') {
+      uni.showModal({
+        title: '选择验证方式',
+        content: 'NFC未开启，建议开启NFC以获得最佳体验。您也可以使用二维码扫描方式',
+        showCancel: true,
+        confirmText: '去开启',
+        cancelText: '使用二维码',
+        success: (res) => {
+          if (res.confirm) {
+            handleGoEnableNfc()
+          } else {
+            nfcService.switchScanMode('qrcode')
+          }
+        }
+      })
+    }
+
     // 获取任务详情
     const taskDetail = await TaskService.getTaskDetail(taskId.value)
     console.log('[InspectionPage] ========== 任务详情诊断 ==========')
@@ -469,6 +499,9 @@ async function initData() {
     // 获取路线点位 - 使用更灵活的路线ID获取方式
     const actualRouteId = taskDetail?.route?.route_id || taskDetail?.route_id
     console.log('[InspectionPage] 实际使用的路线ID:', actualRouteId)
+
+    // 保存路线ID到ref
+    routeId.value = actualRouteId
 
     if (actualRouteId) {
       console.log('[InspectionPage] 开始获取路线点位, routeId:', actualRouteId)
@@ -580,6 +613,30 @@ function handleModeChange(mode) {
   verificationMethod.value = mode.toUpperCase()
 }
 
+// 处理去开启NFC
+function handleGoEnableNfc() {
+  // 跳转到系统NFC设置页面
+  // #ifdef APP-PLUS
+  const main = plus.android.runtimeMainActivity()
+  const Intent = plus.android.importClass('android.content.Intent')
+  const Settings = plus.android.importClass('android.provider.Settings')
+  const intent = new Intent(Settings.ACTION_NFC_SETTINGS)
+  main.startActivity(intent)
+  // #endif
+}
+
+// 处理切换到二维码模式
+function handleSwitchToQrCode() {
+  scanMode.value = 'qrcode'
+  nfcService.switchScanMode('qrcode')
+  verificationMethod.value = 'QRCODE'
+
+  uni.showToast({
+    title: '已切换到二维码扫描模式',
+    icon: 'success'
+  })
+}
+
 // 开始扫描
 function handleStartScan() {
   if (scanMode.value === 'nfc') {
@@ -655,6 +712,9 @@ async function handleQrCodeSuccess(result) {
     isMatched.value = true
     verificationMethod.value = 'QRCODE'
     currentPoint.value = scanResult.point
+
+    // AC9: 设置强制拍照标志
+    isMandatoryPhoto.value = currentPoint.value.is_photo_required === 1
 
     // 保存验证记录
     await saveVerificationRecord(scanResult.cardId, 'QRCODE', result)
@@ -739,6 +799,9 @@ async function handleManualPointCodeInput(parseResult) {
     verificationMethod.value = 'QRCODE'
     currentPoint.value = scanResult.point
 
+    // AC9: 设置强制拍照标志
+    isMandatoryPhoto.value = currentPoint.value.is_photo_required === 1
+
     // 保存验证记录
     await saveVerificationRecord(scanResult.cardId, 'QRCODE', parseResult.rawContent)
 
@@ -807,20 +870,67 @@ function handleScanError(scanResult) {
 // 处理卡片扫描
 async function handleCardScanned(cardId) {
   try {
+    // AC13: 验证卡ID格式
+    if (!cardId || cardId.trim() === '') {
+      uni.showModal({
+        title: '读卡失败',
+        content: '无效的NFC卡，请更换卡后重试',
+        showCancel: false,
+        confirmText: '知道了'
+      })
+      return
+    }
+
+    // AC13: 验证卡ID长度（通常为14-20个字符）
+    if (cardId.length < 6 || cardId.length > 30) {
+      uni.showModal({
+        title: '读卡失败',
+        content: '卡片数据异常，无法识别',
+        showCancel: false,
+        confirmText: '知道了'
+      })
+      return
+    }
+
     uni.showLoading({ title: '验证中...' })
 
-    // 匹配点位
-    const matchResult = await pointMatchingService.matchPoint(cardId, currentPoint.value.route_id)
+    // 匹配点位 - 使用保存的routeId
+    console.log('[InspectionPage] 开始匹配点位, cardId:', cardId, 'routeId:', routeId.value)
+
+    if (!routeId.value) {
+      uni.hideLoading()
+      uni.showToast({
+        title: '路线ID未设置，无法匹配点位',
+        icon: 'none'
+      })
+      return
+    }
+
+    const matchResult = await pointMatchingService.matchPoint(cardId, routeId.value)
 
     if (!matchResult.success) {
       uni.hideLoading()
 
       if (matchResult.code === 'CARD_NOT_BOUND') {
         // 卡未绑定
-        showErrorDialog('卡片验证失败', matchResult.error)
+        uni.showModal({
+          title: '卡片验证失败',
+          content: matchResult.error || '卡片未绑定到任何点位',
+          showCancel: false
+        })
       } else if (matchResult.code === 'ORDER_INVALID') {
         // 顺序错误
-        showOrderErrorDialog(matchResult)
+        uni.showModal({
+          title: '顺序错误',
+          content: matchResult.error || '请按照路线顺序进行巡检',
+          showCancel: false
+        })
+      } else {
+        uni.showModal({
+          title: '匹配失败',
+          content: matchResult.error || '点位匹配失败',
+          showCancel: false
+        })
       }
 
       return
@@ -828,8 +938,113 @@ async function handleCardScanned(cardId) {
 
     // 验证通过
     uni.hideLoading()
+
+    // AC6: 检查该点位是否已巡检过
+    const inspectedCheck = await DatabaseService.selectSync({
+      sql: `SELECT inspection_time FROM inspection_record
+            WHERE task_id = ? AND point_id = ?
+            ORDER BY inspection_time DESC LIMIT 1`,
+      params: [taskId.value, matchResult.point.point_id]
+    })
+
+    if (inspectedCheck && inspectedCheck.length > 0) {
+      const lastInspectionTime = new Date(inspectedCheck[0].inspection_time)
+      const minutesAgo = Math.floor((Date.now() - lastInspectionTime.getTime()) / 60000)
+
+      // 显示确认对话框
+      const confirmResult = await new Promise((resolve) => {
+        uni.showModal({
+          title: '重复巡检提示',
+          content: `该点位已巡检过(${minutesAgo}分钟前)，确定要重新巡检吗？`,
+          showCancel: true,
+          cancelText: '跳过',
+          confirmText: '重新巡检',
+          success: (res) => resolve(res.confirm)
+        })
+      })
+
+      if (!confirmResult) {
+        // 用户选择跳过，跳到下一点位
+        if (currentPointIndex.value < totalPoints.value) {
+          currentPointIndex.value++
+          currentPoint.value = routePoints.value.find(p => p.point_order === currentPointIndex.value)
+          uni.showToast({
+            title: '已跳过，进入下一点位',
+            icon: 'none'
+          })
+        }
+        return
+      }
+    }
+
     isMatched.value = true
     currentPoint.value = matchResult.point
+
+    // AC9: 设置强制拍照标志
+    isMandatoryPhoto.value = currentPoint.value.is_photo_required === 1
+
+    // AC12: 检查点位顺序
+    const expectedOrder = currentPointIndex.value
+    const actualOrder = currentPoint.value.point_order
+
+    if (actualOrder !== expectedOrder) {
+      // 顺序不对，显示提醒对话框
+      const continueResult = await new Promise((resolve) => {
+        uni.showModal({
+          title: '⚠️ 点位顺序提醒',
+          content: `当前应巡检第${expectedOrder}个点位，您读取的是第${actualOrder}个点位，是否跳过第${expectedOrder}个点位？`,
+          showCancel: true,
+          cancelText: '返回巡检第' + expectedOrder + '个',
+          confirmText: '继续巡检第' + actualOrder + '个',
+          success: (res) => resolve(res.confirm)
+        })
+      })
+
+      if (!continueResult) {
+        // 用户选择返回巡检应该巡检的点位
+        isMatched.value = false
+        currentPoint.value = routePoints.value.find(p => p.point_order === expectedOrder)
+        uni.showToast({
+          title: `请读取第${expectedOrder}个点位的NFC卡`,
+          icon: 'none',
+          duration: 2000
+        })
+        return
+      }
+
+      // 用户选择继续巡检当前点位，需要跳检前面的点位
+      try {
+        uni.showLoading({ title: '处理中...' })
+
+        // 跳检前面所有未巡检的点位
+        for (let i = expectedOrder; i < actualOrder; i++) {
+          const skipPoint = routePoints.value.find(p => p.point_order === i)
+          if (skipPoint) {
+            await skipService.skipPoint({
+              taskId: taskId.value,
+              pointId: skipPoint.point_id,
+              skipReason: 'order_skip',
+              skipReasonText: '未按顺序巡检',
+              skipRemark: `自动跳检：用户直接巡检了第${actualOrder}个点位`,
+              inspectorId: 1 // TODO: 从用户信息获取
+            })
+          }
+        }
+
+        // 更新当前点位索引
+        currentPointIndex.value = actualOrder
+
+        uni.hideLoading()
+      } catch (error) {
+        console.error('跳检失败:', error)
+        uni.hideLoading()
+        uni.showToast({
+          title: '跳检失败',
+          icon: 'error'
+        })
+        return
+      }
+    }
 
     // 保存验证记录
     await saveVerificationRecord(cardId)
@@ -981,28 +1196,66 @@ function handleItemClick(item) {
 }
 
 // 处理项目结果确认
-function handleItemResultConfirm(result) {
-  // 保存项目结果到列表
-  itemResults.value.push(result)
+async function handleItemResultConfirm(result) {
+  try {
+    // AC2: 立即保存到数据库
+    await inspectionItemService.saveItemResult({
+      recordId: currentRecordId.value,
+      itemId: result.itemId,
+      itemName: result.itemName,
+      itemType: result.itemType,
+      actualValue: result.actualValue,
+      isAbnormal: result.isAbnormal ? 1 : 0,
+      abnormalRemark: result.abnormalRemark
+    })
 
-  // 标记项目为已完成
-  const item = inspectionItems.value.find(i => i.item_id === result.itemId)
-  if (item) {
-    item.isCompleted = true
-    item.actualValue = result.actualValue
-    item.isAbnormal = result.isAbnormal
-    item.abnormalRemark = result.abnormalRemark
+    // 保存到内存数组（用于UI显示）
+    itemResults.value.push(result)
+
+    // 标记项目为已完成
+    const item = inspectionItems.value.find(i => i.item_id === result.itemId)
+    if (item) {
+      item.isCompleted = true
+      item.actualValue = result.actualValue
+      item.isAbnormal = result.isAbnormal
+      item.abnormalRemark = result.abnormalRemark
+    }
+
+    uni.showToast({
+      title: '已保存',
+      icon: 'success'
+    })
+  } catch (error) {
+    console.error('保存项目结果失败:', error)
+    uni.showToast({
+      title: '保存失败',
+      icon: 'error'
+    })
   }
-
-  uni.showToast({
-    title: '已保存',
-    icon: 'success'
-  })
 }
 
 // 处理照片变更
-function handlePhotoChange(photos) {
-  currentPhotos.value = photos
+async function handlePhotoChange(photos) {
+  try {
+    // 更新内存数组
+    currentPhotos.value = photos
+
+    // AC2: 立即保存照片路径到数据库
+    if (currentRecordId.value) {
+      const imageUrls = photos.join(',')
+      const result = await inspectionRecordService.updatePhotoUrls(
+        currentRecordId.value,
+        imageUrls,
+        photos.length
+      )
+
+      if (!result.success) {
+        console.error('保存照片路径失败:', result.error)
+      }
+    }
+  } catch (error) {
+    console.error('处理照片变更失败:', error)
+  }
 }
 
 // 检查点位是否已完成
@@ -1109,22 +1362,20 @@ function handleCompletePoint() {
           // 保存照片路径（逗号分隔）
           const imageUrls = currentPhotos.value.join(',')
 
-          // 保存巡检记录（包含照片）
-          // 注意：这里只是保存本地记录，实际的同步会在后台进行
-          // TODO: 调用inspectionRecordService保存记录
+          // AC2: 完成巡检记录（更新status、照片路径、照片数量）
+          const completeResult = await inspectionRecordService.completeRecord({
+            recordId: currentRecordId.value,
+            status: 'COMPLETED',
+            imageUrls: imageUrls,
+            photoCount: currentPhotos.value.length,
+            inspectionTime: new Date().toISOString()
+          })
 
-          // 保存项目结果
-          for (const result of itemResults.value) {
-            await inspectionItemService.saveItemResult({
-              recordId: 0, // 实际应使用真实的record_id
-              itemId: result.itemId,
-              itemName: result.itemName,
-              itemType: result.itemType,
-              actualValue: result.actualValue,
-              isAbnormal: result.isAbnormal ? 1 : 0,
-              abnormalRemark: result.abnormalRemark
-            })
+          if (!completeResult.success) {
+            throw new Error(completeResult.error || '完成记录失败')
           }
+
+          // 注意：项目结果已经在handleItemResultConfirm中实时保存，这里不需要再保存
 
           uni.hideLoading()
 
@@ -1698,6 +1949,51 @@ async function handleSkipConfirm(skipData) {
       flex: 2;
       background-color: #52c41a;
       color: #fff;
+    }
+  }
+}
+
+// NFC未开启警告
+.nfc-warning {
+  display: flex;
+  align-items: center;
+  margin: 20rpx;
+  padding: 20rpx;
+  background-color: #fff3cd;
+  border-radius: 12rpx;
+  border-left: 4rpx solid #faad14;
+
+  .warning-icon {
+    font-size: 32rpx;
+    margin-right: 16rpx;
+  }
+
+  .warning-text {
+    font-size: 26rpx;
+    color: #856404;
+    flex: 1;
+  }
+
+  .warning-actions {
+    display: flex;
+    gap: 12rpx;
+  }
+
+  .warning-btn {
+    padding: 8rpx 20rpx;
+    border-radius: 20rpx;
+    font-size: 24rpx;
+    border: none;
+    white-space: nowrap;
+
+    &.warning-btn-primary {
+      background-color: #1890ff;
+      color: #fff;
+    }
+
+    &.warning-btn-secondary {
+      background-color: #f0f0f0;
+      color: #666;
     }
   }
 }

@@ -58,6 +58,12 @@
             <view>离线数据管理</view>
           </view>
         </view>
+        <view class="list-cell list-cell-arrow" @click="handleUploadSettings">
+          <view class="menu-item-box">
+            <view class="iconfont icon-upload menu-icon"></view>
+            <view>上传设置</view>
+          </view>
+        </view>
         <view class="list-cell list-cell-arrow" @click="handleHelp">
           <view class="menu-item-box">
             <view class="iconfont icon-help menu-icon"></view>
@@ -106,6 +112,12 @@
   function handleOfflineData() {
     uni.navigateTo({
       url: '/pages/offline-data/index'
+    })
+  }
+
+  function handleUploadSettings() {
+    uni.navigateTo({
+      url: '/pages/upload-settings/index'
     })
   }
 
